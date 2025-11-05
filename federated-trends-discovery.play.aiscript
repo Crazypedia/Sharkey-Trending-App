@@ -8,11 +8,13 @@ let MAX_TAGS = 30
 let FONT_MIN = 14
 let FONT_MAX = 36
 let MAX_SNAPSHOTS = 12
+let MAX_MEDIA = 25
 
 // State
 var currentTags = []
 var isLoading = true
 var snapshots = []
+var mediaPosts = []
 
 // Storage functions
 @loadSnapshots() {
@@ -142,6 +144,55 @@ var snapshots = []
   return posts
 }
 
+// Collect media posts from trending tags
+@collectMedia() {
+  var media = []
+
+  each let tag currentTags {
+    if media.len >= MAX_MEDIA {
+      break
+    }
+
+    // Get posts for this tag
+    let posts = fetchPostsForTag(tag.tag)
+
+    each let post posts {
+      if media.len >= MAX_MEDIA {
+        break
+      }
+
+      // Check if post has media files
+      if Core:type(post.files) == "arr" {
+        if post.files.len > 0 {
+          var hasImage = false
+          var hasVideo = false
+
+          each let file post.files {
+            if Core:type(file.type) == "str" {
+              if file.type.incl("image/") {
+                hasImage = true
+              }
+              if file.type.incl("video/") {
+                hasVideo = true
+              }
+            }
+          }
+
+          if hasImage || hasVideo {
+            media.push({
+              post: post
+              hasImage: hasImage
+              hasVideo: hasVideo
+            })
+          }
+        }
+      }
+    }
+  }
+
+  return media
+}
+
 // Render hashtag buttons
 @renderTags(tags) {
   var buttons = []
@@ -183,6 +234,56 @@ var snapshots = []
   return buttons
 }
 
+// Render media wall
+@renderMedia(media) {
+  var buttons = []
+
+  if media.len == 0 {
+    buttons.push(Ui:C:text({
+      text: "No trending media available"
+    }))
+  } else {
+    each let item media {
+      var icon = "🖼️"
+      if item.hasVideo {
+        icon = "🎥"
+      }
+
+      var btnText = icon
+      if Core:type(item.post.user) == "obj" {
+        btnText = `{icon} @{item.post.user.username}`
+      }
+
+      let btn = Ui:C:button({
+        text: btnText
+        rounded: true
+        onClick: @() {
+          var msg = ""
+
+          if Core:type(item.post.user) == "obj" {
+            msg = `Posted by @{item.post.user.username}{Core:lf}{Core:lf}`
+          }
+
+          if Core:type(item.post.text) == "str" {
+            let preview = item.post.text.slice(0 200)
+            msg = `{msg}{preview}{Core:lf}{Core:lf}`
+          }
+
+          if Core:type(item.post.files) == "arr" {
+            msg = `{msg}Media files: {item.post.files.len}`
+          }
+
+          Mk:dialog("Post Preview" msg "info")
+        }
+      })
+
+      buttons.push(btn)
+    }
+  }
+
+  return buttons
+}
+
 // Main render
 @render() {
   var content = []
@@ -208,7 +309,7 @@ var snapshots = []
 
     // Status
     content.push(Ui:C:text({
-      text: `Tags: {currentTags.len} | Snapshots: {snapshots.len}`
+      text: `Tags: {currentTags.len} | Snapshots: {snapshots.len} | Media: {mediaPosts.len}`
     }))
 
     // Tag buttons
@@ -221,6 +322,21 @@ var snapshots = []
       content.push(Ui:C:text({
         text: "No trending tags found"
       }))
+    }
+
+    // Spacer
+    content.push(Ui:C:text({text: " "}))
+
+    // Media wall header
+    content.push(Ui:C:mfm({
+      text: "# Trending Media"
+      size: 1.5
+    }))
+
+    // Media wall
+    let mediaButtons = renderMedia(mediaPosts)
+    each let btn mediaButtons {
+      content.push(btn)
     }
   }
 
@@ -239,6 +355,9 @@ var snapshots = []
     saveSnapshot(currentTags)
   }
 
+  // Collect media from trending tags
+  mediaPosts = collectMedia()
+
   isLoading = false
   render()
 }
@@ -255,6 +374,9 @@ currentTags = fetchTrends()
 if currentTags.len > 0 {
   saveSnapshot(currentTags)
 }
+
+// Collect initial media
+mediaPosts = collectMedia()
 
 isLoading = false
 render()
