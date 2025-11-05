@@ -278,44 +278,39 @@ var snapshots = []
   }
 }
 
-// Render hashtag buttons with size scaling
+// Render hashtag cloud (inline, sized by popularity)
 @renderTags(tags) {
-  var elements = []
+  var buttons = []
 
   for (let index = 0, tags.len) {
     let tag = tags[index]
-
-    // Get MFM size scale based on popularity
-    let sizeScale = getTagSizeScale(tag.normalized)
 
     // Top 5 tags are primary (highlighted)
     let isPrimary = index < 5
 
     let tagCopy = tag.tag // Capture for closure
 
-    // Use container with sized MFM text and button
-    elements.push(Ui:C:container({
-      children: [
-        Ui:C:mfm({
-          text: `$[{sizeScale} #{tag.tag}]`
-          bold: isPrimary
-        })
-        Ui:C:button({
-          text: "View Posts"
-          rounded: true
-          primary: isPrimary
-          onClick: @() {
-            handleTagClick(tagCopy)
-          }
-        })
-      ]
-      align: "center"
-      padding: 4
+    // Create sized hashtag text using MFM
+    let sizeScale = getTagSizeScale(tag.normalized)
+    var tagText = `$[{sizeScale} #{tag.tag}]`
+
+    // Make bold if top 5
+    if isPrimary {
+      tagText = `$[{sizeScale} **#{tag.tag}**]`
+    }
+
+    // Create button with sized text
+    buttons.push(Ui:C:button({
+      text: tagText
       rounded: true
+      primary: isPrimary
+      onClick: @() {
+        handleTagClick(tagCopy)
+      }
     }))
   }
 
-  return elements
+  return buttons
 }
 
 // Refresh function
@@ -371,12 +366,14 @@ var snapshots = []
       text: statusMsg
     }))
 
-    // Tag buttons
+    // Tag cloud - wrap in container for inline flow
     if currentTags.len > 0 {
       let tagButtons = renderTags(currentTags)
-      for (let i = 0, tagButtons.len) {
-        content.push(tagButtons[i])
-      }
+      content.push(Ui:C:container({
+        children: tagButtons
+        align: "left"
+        padding: 8
+      }))
     } else {
       content.push(Ui:C:text({
         text: "No trending tags found"
