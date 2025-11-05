@@ -226,13 +226,38 @@ var snapshots = []
       text: `Tags: {currentTags.len} | Snapshots: {snapshots.len}`
     }))
 
-    // Tag cloud (inline word cloud)
+    // Tag cloud (inline text)
     if currentTags.len > 0 {
-      let tagButtons = renderTags(currentTags)
-      content.push(Ui:C:container({
-        children: tagButtons
-        align: "left"
+      // Build inline tag cloud text
+      var cloudText = ""
+      for (let i = 0, currentTags.len) {
+        let tag = currentTags[i]
+        cloudText = `{cloudText}#{tag.tag}  `
+      }
+
+      content.push(Ui:C:mfm({
+        text: cloudText
       }))
+
+      // Top 5 clickable tags
+      content.push(Ui:C:text({
+        text: "Click to explore:"
+      }))
+
+      for (let i = 0, 5) {
+        if i < currentTags.len {
+          let tag = currentTags[i]
+          let tagCopy = tag.tag
+          content.push(Ui:C:button({
+            text: `#{tag.tag}`
+            rounded: true
+            primary: true
+            onClick: @() {
+              handleTagClick(tagCopy)
+            }
+          }))
+        }
+      }
     } else {
       content.push(Ui:C:text({
         text: "No trending tags found"
