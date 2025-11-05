@@ -28,7 +28,8 @@ var snapshots = []
 
   // Build tags map
   var tagsMap = {}
-  each let t tags {
+  for (let i = 0, tags.len) {
+    let t = tags[i]
     tagsMap[t.tag] = t.score
   }
 
@@ -40,11 +41,11 @@ var snapshots = []
 
   // Trim old snapshots
   if snapshots.len > MAX_SNAPSHOTS {
-    snapshots = snapshots.slice((snapshots.len - MAX_SNAPSHOTS) snapshots.len)
+    snapshots = snapshots.slice((snapshots.len - MAX_SNAPSHOTS), snapshots.len)
   }
 
   // Save to storage
-  Mk:save("hashtags_snapshots" {snapshots: snapshots})
+  Mk:save("hashtags_snapshots", {snapshots: snapshots})
 }
 
 // Fetch trending hashtags
@@ -52,13 +53,14 @@ var snapshots = []
   var tags = []
 
   eval {
-    let result = Mk:api("hashtags/trend" {limit: 25})
+    let result = Mk:api("hashtags/trend", {limit: 25})
 
     if Core:type(result) == "arr" {
       // Process each trend
       var maxScore = 0
 
-      each let item result {
+      for (let i = 0, result.len) {
+        let item = result[i]
         if Core:type(item) == "obj" {
           var score = 1
 
@@ -80,15 +82,16 @@ var snapshots = []
 
       // Normalize scores
       if maxScore > 0 {
-        each let t tags {
+        for (let i = 0, tags.len) {
+          let t = tags[i]
           t.normalized = t.score / maxScore
         }
       }
 
-      // Sort by score descending
+      // Sort by score descending (bubble sort)
       if tags.len > 1 {
-        for let i 0 (tags.len - 1) {
-          for let j 0 (tags.len - i - 1) {
+        for (let i = 0, (tags.len - 1)) {
+          for (let j = 0, (tags.len - i - 1)) {
             if tags[j].score < tags[j + 1].score {
               let temp = tags[j]
               tags[j] = tags[j + 1]
@@ -108,7 +111,7 @@ var snapshots = []
   var posts = []
 
   eval {
-    let result = Mk:api("notes/search-by-tag" {
+    let result = Mk:api("notes/search-by-tag", {
       tag: tag
       limit: POST_PREVIEW_LIMIT
     })
@@ -121,7 +124,7 @@ var snapshots = []
   // Fallback to notes/search if needed
   if posts.len == 0 {
     eval {
-      let result = Mk:api("notes/search" {
+      let result = Mk:api("notes/search", {
         query: `#{tag}`
         limit: POST_PREVIEW_LIMIT
       })
@@ -135,45 +138,66 @@ var snapshots = []
   return posts
 }
 
+// Handle tag click
+@handleTagClick(tag) {
+  // Fetch and show posts
+  let posts = fetchPostsForTag(tag)
+
+  if posts.len > 0 {
+    var msg = `Recent posts for #{tag}:{Str:lf}{Str:lf}`
+
+    for (let i = 0, posts.len) {
+      let post = posts[i]
+      if Core:type(post.text) == "str" {
+        let preview = post.text.slice(0, 100)
+        msg = `{msg}- {preview}{Str:lf}{Str:lf}`
+      }
+    }
+
+    Mk:dialog("Posts", msg, "info")
+  } else {
+    Mk:dialog("No Posts", `No recent posts found for #{tag}`, "info")
+  }
+}
+
 // Render hashtag buttons
 @renderTags(tags) {
   var buttons = []
-  var index = 0
 
-  each let tag tags {
+  for (let index = 0, tags.len) {
+    let tag = tags[index]
+
     // Top 5 tags are primary (highlighted)
     let isPrimary = index < 5
 
-    let btn = Ui:C:button({
+    let tagCopy = tag.tag // Capture for closure
+    buttons.push(Ui:C:button({
       text: `#{tag.tag}`
       rounded: true
       primary: isPrimary
       onClick: @() {
-        // Fetch and show posts
-        let posts = fetchPostsForTag(tag.tag)
-
-        if posts.len > 0 {
-          var msg = `Recent posts for #{tag.tag}:{Core:lf}{Core:lf}`
-
-          each let post posts {
-            if Core:type(post.text) == "str" {
-              let preview = post.text.slice(0 100)
-              msg = `{msg}- {preview}{Core:lf}{Core:lf}`
-            }
-          }
-
-          Mk:dialog("Posts" msg "info")
-        } else {
-          Mk:dialog("No Posts" `No recent posts found for #{tag.tag}` "info")
-        }
+        handleTagClick(tagCopy)
       }
-    })
-
-    buttons.push(btn)
-    index = index + 1
+    }))
   }
 
   return buttons
+}
+
+// Refresh function
+@doRefresh() {
+  isLoading = true
+  render()
+
+  currentTags = fetchTrends()
+
+  // Save snapshot if we got tags
+  if currentTags.len > 0 {
+    saveSnapshot(currentTags)
+  }
+
+  isLoading = false
+  render()
 }
 
 // Main render
@@ -194,9 +218,7 @@ var snapshots = []
     // Refresh button
     content.push(Ui:C:button({
       text: "🔄 Refresh"
-      onClick: @() {
-        doRefresh()
-      }
+      onClick: doRefresh
     }))
 
     // Status
@@ -207,8 +229,8 @@ var snapshots = []
     // Tag buttons
     if currentTags.len > 0 {
       let tagButtons = renderTags(currentTags)
-      each let btn tagButtons {
-        content.push(btn)
+      for (let i = 0, tagButtons.len) {
+        content.push(tagButtons[i])
       }
     } else {
       content.push(Ui:C:text({
@@ -218,22 +240,6 @@ var snapshots = []
   }
 
   Ui:render(content)
-}
-
-// Refresh function
-@doRefresh() {
-  isLoading = true
-  render()
-
-  currentTags = fetchTrends()
-
-  // Save snapshot if we got tags
-  if currentTags.len > 0 {
-    saveSnapshot(currentTags)
-  }
-
-  isLoading = false
-  render()
 }
 
 // Initialize
