@@ -7,11 +7,9 @@
 let MAX_TAGS = 30
 let MAX_SNAPSHOTS = 12
 let POST_PREVIEW_LIMIT = 3
-let ENABLE_FEDIBUZZ = false // Set to true to enable external trends
 
 // State
 var currentTags = []
-var externalTags = []
 var isLoading = true
 var snapshots = []
 
@@ -108,106 +106,6 @@ var snapshots = []
   return tags
 }
 
-// Fetch external trends from FediBuzz (STUB)
-@fetchExternalTrends() {
-  // STUB: FediBuzz integration for external federated trends
-  // This will be implemented when FediBuzz API access is available
-  //
-  // Expected implementation:
-  // 1. Fetch from FediBuzz API (e.g., https://fedi.buzz/api/trends)
-  // 2. Parse response and normalize to our tag format
-  // 3. Return array of {tag, score, normalized} objects
-  //
-  // For now, return empty array
-  var external = []
-
-  if ENABLE_FEDIBUZZ {
-    eval {
-      // Future: Uncomment when FediBuzz is ready
-      // let response = fetch("https://fedi.buzz/api/trends")
-      // Parse and process response...
-      //
-      // For testing, you can add mock data:
-      // external.push({tag: "fediverse", score: 100, normalized: 1.0})
-      // external.push({tag: "mastodon", score: 50, normalized: 0.5})
-    }
-  }
-
-  return external
-}
-
-// Merge local and external tags
-@mergeTags(localTags, externalTags) {
-  var merged = {}
-
-  // Add local tags
-  for (let i = 0, localTags.len) {
-    let tag = localTags[i]
-    merged[tag.tag] = {
-      tag: tag.tag
-      localScore: tag.score
-      externalScore: 0
-      totalScore: tag.score
-      normalized: 0
-    }
-  }
-
-  // Add/merge external tags
-  for (let i = 0, externalTags.len) {
-    let tag = externalTags[i]
-    if Core:type(merged[tag.tag]) == "obj" {
-      // Tag exists in both - merge scores
-      merged[tag.tag].externalScore = tag.score
-      merged[tag.tag].totalScore = merged[tag.tag].localScore + tag.score
-    } else {
-      // New tag from external source
-      merged[tag.tag] = {
-        tag: tag.tag
-        localScore: 0
-        externalScore: tag.score
-        totalScore: tag.score
-        normalized: 0
-      }
-    }
-  }
-
-  // Convert to array and normalize
-  var result = []
-  let keys = Core:obj_keys(merged)
-  var maxScore = 0
-
-  for (let i = 0, keys.len) {
-    let key = keys[i]
-    let item = merged[key]
-    result.push(item)
-    if item.totalScore > maxScore {
-      maxScore = item.totalScore
-    }
-  }
-
-  // Normalize scores
-  if maxScore > 0 {
-    for (let i = 0, result.len) {
-      result[i].normalized = result[i].totalScore / maxScore
-    }
-  }
-
-  // Sort by total score
-  if result.len > 1 {
-    for (let i = 0, (result.len - 1)) {
-      for (let j = 0, (result.len - i - 1)) {
-        if result[j].totalScore < result[j + 1].totalScore {
-          let temp = result[j]
-          result[j] = result[j + 1]
-          result[j + 1] = temp
-        }
-      }
-    }
-  }
-
-  return result
-}
-
 // Fetch posts for a tag
 @fetchPostsForTag(tag) {
   var posts = []
@@ -262,23 +160,7 @@ var snapshots = []
   }
 }
 
-// Calculate MFM size scale for tag
-@getTagSizeScale(normalized) {
-  // Map normalized score (0-1) to MFM size scale
-  if normalized >= 0.8 {
-    return "x3"      // Largest (80-100%)
-  } elif normalized >= 0.6 {
-    return "x2"      // Large (60-80%)
-  } elif normalized >= 0.4 {
-    return "1.5"     // Medium-large (40-60%)
-  } elif normalized >= 0.2 {
-    return "1.2"     // Medium (20-40%)
-  } else {
-    return "1"       // Base size (0-20%)
-  }
-}
-
-// Render hashtag cloud (inline word cloud)
+// Render hashtag buttons
 @renderTags(tags) {
   var buttons = []
 
@@ -289,8 +171,6 @@ var snapshots = []
     let isPrimary = index < 5
 
     let tagCopy = tag.tag // Capture for closure
-
-    // Create button with tag name
     buttons.push(Ui:C:button({
       text: `#{tag.tag}`
       rounded: true
@@ -309,14 +189,7 @@ var snapshots = []
   isLoading = true
   render()
 
-  // Fetch local trends
-  let localTags = fetchTrends()
-
-  // Fetch external trends (stub - currently returns empty)
-  externalTags = fetchExternalTrends()
-
-  // Merge local and external tags
-  currentTags = mergeTags(localTags, externalTags)
+  currentTags = fetchTrends()
 
   // Save snapshot if we got tags
   if currentTags.len > 0 {
@@ -349,22 +222,16 @@ var snapshots = []
     }))
 
     // Status
-    var statusMsg = `Tags: {currentTags.len} | Snapshots: {snapshots.len}`
-    if ENABLE_FEDIBUZZ {
-      statusMsg = `{statusMsg} | External: {externalTags.len}`
-    }
     content.push(Ui:C:text({
-      text: statusMsg
+      text: `Tags: {currentTags.len} | Snapshots: {snapshots.len}`
     }))
 
-    // Tag cloud - wrap in container for inline flow
+    // Tag buttons
     if currentTags.len > 0 {
       let tagButtons = renderTags(currentTags)
-      content.push(Ui:C:container({
-        children: tagButtons
-        align: "left"
-        padding: 8
-      }))
+      for (let i = 0, tagButtons.len) {
+        content.push(tagButtons[i])
+      }
     } else {
       content.push(Ui:C:text({
         text: "No trending tags found"
@@ -381,12 +248,7 @@ loadSnapshots()
 isLoading = true
 render()
 
-// Fetch local and external trends
-let localTags = fetchTrends()
-externalTags = fetchExternalTrends()
-
-// Merge tags
-currentTags = mergeTags(localTags, externalTags)
+currentTags = fetchTrends()
 
 // Save initial snapshot
 if currentTags.len > 0 {
