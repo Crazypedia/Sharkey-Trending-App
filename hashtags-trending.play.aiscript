@@ -226,12 +226,13 @@ var snapshots = []
       text: `Tags: {currentTags.len} | Snapshots: {snapshots.len}`
     }))
 
-    // Tag buttons
+    // Tag cloud (inline word cloud)
     if currentTags.len > 0 {
       let tagButtons = renderTags(currentTags)
-      for (let i = 0, tagButtons.len) {
-        content.push(tagButtons[i])
-      }
+      content.push(Ui:C:container({
+        children: tagButtons
+        align: "left"
+      }))
     } else {
       content.push(Ui:C:text({
         text: "No trending tags found"
