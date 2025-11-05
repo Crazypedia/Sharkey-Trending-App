@@ -1,10 +1,33 @@
-# Federated Trends Discovery - Misskey Play App
+# Federated Trends Discovery - Misskey Play App Suite
 
-A comprehensive AiScript-based Play app for Misskey/Sharkey that displays trending hashtags and media from your local instance and federated mutual servers, without requiring any external aggregators or proxies.
+A modular collection of AiScript-based Play apps for Misskey/Sharkey that display trending content from your local instance, without requiring any external aggregators or proxies.
+
+## 📦 Modular Architecture (v0.9+)
+
+The suite is now split into **three independent Play apps** for better maintainability and performance:
+
+### 1. **Hashtags Trending** (`hashtags-trending.play.aiscript`)
+- 📊 Display trending hashtags from local instance
+- 🎯 Click tags to view recent posts
+- 💾 Snapshot caching (up to 12 snapshots)
+- 🔝 Top 5 tags highlighted
+- ↕️ Sorted by popularity
+
+### 2. **Media Thumbnails** (`media-thumbnails.play.aiscript`)
+- 🖼️ Display recent media posts (images)
+- 🎥 Display video posts
+- 👤 Show author usernames
+- 🔄 Manual refresh
+
+### 3. **Posts Carousel** (`posts-carousel.play.aiscript`)
+- 📝 Browse trending posts one at a time
+- ◀️▶️ Previous/Next navigation
+- 👤 Author information
+- 🔄 Manual refresh
 
 ## Features
 
-### ✅ Implemented (v1.0)
+### ✅ Implemented (v0.9)
 
 - **📊 Trending Hashtag Cloud**: Displays trending hashtags with font-size scaling based on popularity
 - **🎬 Trending Media Wall**: Shows trending images and videos from popular posts
@@ -22,30 +45,44 @@ A comprehensive AiScript-based Play app for Misskey/Sharkey that displays trendi
 
 ## Installation
 
-### Step 1: Open Misskey/Sharkey Play
+### Quick Start: Install One or All Apps
 
-1. Navigate to your Misskey/Sharkey instance
-2. Go to **"Play"** section (usually at `/play`)
-3. Click **"Create New Play"**
+You can install any combination of the three apps. Each works independently!
 
-### Step 2: Copy the Code
+#### App 1: Hashtags Trending (Recommended Start)
 
-1. Open [`federated-trends-discovery.play.aiscript`](./federated-trends-discovery.play.aiscript)
-2. Copy the entire contents
-3. Paste into the Play editor
+1. Navigate to your Misskey/Sharkey Play section (`/play`)
+2. Click **"Create New Play"**
+3. **Copy** the contents of [`hashtags-trending.play.aiscript`](./hashtags-trending.play.aiscript)
+4. **Paste** into the Play editor
+5. **Name**: "Hashtags Trending"
+6. **Description**: "Display and explore trending hashtags"
+7. Click **"Save"** and **"Play"**
 
-### Step 3: Configure & Publish
+#### App 2: Media Thumbnails (Optional)
 
-1. Give your Play a name: **"Federated Trends Discovery"**
-2. Add a description: **"Discover trending hashtags and media from your instance"**
-3. Set visibility (Public/Home/Followers)
-4. Click **"Save"** or **"Publish"**
+1. Create another new Play
+2. **Copy** the contents of [`media-thumbnails.play.aiscript`](./media-thumbnails.play.aiscript)
+3. **Paste** into the Play editor
+4. **Name**: "Trending Media"
+5. **Description**: "Browse recent media posts"
+6. Click **"Save"** and **"Play"**
 
-### Step 4: Run the App
+#### App 3: Posts Carousel (Optional)
 
-1. Click **"Play"** to execute
-2. Wait for initial trends to load
-3. Interact with hashtags and media items
+1. Create another new Play
+2. **Copy** the contents of [`posts-carousel.play.aiscript`](./posts-carousel.play.aiscript)
+3. **Paste** into the Play editor
+4. **Name**: "Posts Carousel"
+5. **Description**: "Browse trending posts one by one"
+6. Click **"Save"** and **"Play"**
+
+### Why Modular?
+
+- ✅ **Easier to Debug**: Each app is simpler and self-contained
+- ✅ **Better Performance**: Run only what you need
+- ✅ **Independent Testing**: Test features separately
+- ✅ **Gradual Rollout**: Install hashtags first, add others later
 
 ## Usage
 

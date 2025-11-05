@@ -1,0 +1,171 @@
+/// @ 0.18.0
+
+// Trending Media Thumbnails Display
+// Part 2 of Federated Trends Discovery Suite
+// STUB VERSION - To be enhanced
+
+// Configuration
+let MAX_MEDIA = 25
+
+// State
+var mediaPosts = []
+var isLoading = true
+
+// Fetch media posts (stub - will be enhanced)
+@fetchMedia() {
+  var media = []
+
+  // TODO: Implement full media collection from trending tags
+  // For now, just fetch recent posts with media
+
+  eval {
+    let result = Mk:api("notes/local-timeline" {
+      limit: 20
+      withFiles: true
+    })
+
+    if Core:type(result) == "arr" {
+      each let post result {
+        if media.len >= MAX_MEDIA {
+          break
+        }
+
+        if Core:type(post.files) == "arr" {
+          if post.files.len > 0 {
+            var hasImage = false
+            var hasVideo = false
+
+            each let file post.files {
+              if Core:type(file.type) == "str" {
+                if file.type.incl("image/") {
+                  hasImage = true
+                }
+                if file.type.incl("video/") {
+                  hasVideo = true
+                }
+              }
+            }
+
+            if hasImage || hasVideo {
+              media.push({
+                post: post
+                hasImage: hasImage
+                hasVideo: hasVideo
+              })
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return media
+}
+
+// Render media wall
+@renderMedia(media) {
+  var buttons = []
+
+  if media.len == 0 {
+    buttons.push(Ui:C:text({
+      text: "No media posts found"
+    }))
+  } else {
+    each let item media {
+      var icon = "🖼️"
+      if item.hasVideo {
+        icon = "🎥"
+      }
+
+      var btnText = icon
+      if Core:type(item.post.user) == "obj" {
+        btnText = `{icon} @{item.post.user.username}`
+      }
+
+      let btn = Ui:C:button({
+        text: btnText
+        rounded: true
+        onClick: @() {
+          var msg = ""
+
+          if Core:type(item.post.user) == "obj" {
+            msg = `Posted by @{item.post.user.username}{Core:lf}{Core:lf}`
+          }
+
+          if Core:type(item.post.text) == "str" {
+            let preview = item.post.text.slice(0 150)
+            msg = `{msg}{preview}{Core:lf}{Core:lf}`
+          }
+
+          if Core:type(item.post.files) == "arr" {
+            msg = `{msg}Media files: {item.post.files.len}`
+          }
+
+          Mk:dialog("Media Post" msg "info")
+        }
+      })
+
+      buttons.push(btn)
+    }
+  }
+
+  return buttons
+}
+
+// Main render
+@render() {
+  var content = []
+
+  // Header
+  content.push(Ui:C:mfm({
+    text: "# Trending Media"
+    size: 1.5
+  }))
+
+  if isLoading {
+    content.push(Ui:C:text({
+      text: "Loading media..."
+    }))
+  } else {
+    // Refresh button
+    content.push(Ui:C:button({
+      text: "🔄 Refresh"
+      onClick: @() {
+        doRefresh()
+      }
+    }))
+
+    // Status
+    content.push(Ui:C:text({
+      text: `Media posts: {mediaPosts.len}`
+    }))
+
+    // Media wall
+    let mediaButtons = renderMedia(mediaPosts)
+    each let btn mediaButtons {
+      content.push(btn)
+    }
+  }
+
+  Ui:render(content)
+}
+
+// Refresh function
+@doRefresh() {
+  isLoading = true
+  render()
+
+  mediaPosts = fetchMedia()
+
+  isLoading = false
+  render()
+}
+
+// Initialize
+isLoading = true
+render()
+
+mediaPosts = fetchMedia()
+
+isLoading = false
+render()

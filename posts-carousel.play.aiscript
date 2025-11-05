@@ -1,0 +1,153 @@
+/// @ 0.18.0
+
+// Trending Posts Carousel
+// Part 3 of Federated Trends Discovery Suite
+// STUB VERSION - To be enhanced
+
+// Configuration
+let MAX_POSTS = 10
+
+// State
+var posts = []
+var currentIndex = 0
+var isLoading = true
+
+// Fetch popular posts (stub - will be enhanced)
+@fetchPosts() {
+  var result = []
+
+  eval {
+    // Fetch recent popular posts from local timeline
+    let timeline = Mk:api("notes/local-timeline" {
+      limit: MAX_POSTS
+    })
+
+    if Core:type(timeline) == "arr" {
+      result = timeline
+    }
+  }
+
+  return result
+}
+
+// Show current post
+@showCurrentPost() {
+  if posts.len == 0 {
+    return Ui:C:text({
+      text: "No posts available"
+    })
+  }
+
+  let post = posts[currentIndex]
+  var postText = "(no text)"
+
+  if Core:type(post.text) == "str" {
+    postText = post.text
+  }
+
+  var author = "unknown"
+  if Core:type(post.user) == "obj" {
+    author = `@{post.user.username}`
+  }
+
+  return Ui:C:container({
+    children: [
+      Ui:C:text({
+        text: `Post by {author}`
+      })
+      Ui:C:text({
+        text: postText
+      })
+    ]
+    padding: 10
+    rounded: true
+    borderWidth: 1
+  })
+}
+
+// Main render
+@render() {
+  var content = []
+
+  // Header
+  content.push(Ui:C:mfm({
+    text: "# Trending Posts"
+    size: 1.5
+  }))
+
+  if isLoading {
+    content.push(Ui:C:text({
+      text: "Loading posts..."
+    }))
+  } else {
+    // Navigation controls
+    var controls = []
+
+    // Previous button
+    if currentIndex > 0 {
+      controls.push(Ui:C:button({
+        text: "◀ Prev"
+        onClick: @() {
+          currentIndex = currentIndex - 1
+          render()
+        }
+      }))
+    }
+
+    // Status
+    controls.push(Ui:C:text({
+      text: `{currentIndex + 1} / {posts.len}`
+    }))
+
+    // Next button
+    if currentIndex < (posts.len - 1) {
+      controls.push(Ui:C:button({
+        text: "Next ▶"
+        onClick: @() {
+          currentIndex = currentIndex + 1
+          render()
+        }
+      }))
+    }
+
+    // Refresh button
+    controls.push(Ui:C:button({
+      text: "🔄"
+      onClick: @() {
+        doRefresh()
+      }
+    }))
+
+    // Add controls container
+    content.push(Ui:C:container({
+      children: controls
+      align: "center"
+    }))
+
+    // Show current post
+    content.push(showCurrentPost())
+  }
+
+  Ui:render(content)
+}
+
+// Refresh function
+@doRefresh() {
+  isLoading = true
+  currentIndex = 0
+  render()
+
+  posts = fetchPosts()
+
+  isLoading = false
+  render()
+}
+
+// Initialize
+isLoading = true
+render()
+
+posts = fetchPosts()
+
+isLoading = false
+render()
