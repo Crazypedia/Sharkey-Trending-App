@@ -7,10 +7,46 @@
 let MAX_TAGS = 30
 let FONT_MIN = 14
 let FONT_MAX = 36
+let MAX_SNAPSHOTS = 12
 
 // State
 var currentTags = []
 var isLoading = true
+var snapshots = []
+
+// Storage functions
+@loadSnapshots() {
+  let stored = Mk:load("trends_snapshots")
+  if Core:type(stored) == "obj" {
+    if Core:type(stored.snapshots) == "arr" {
+      snapshots = stored.snapshots
+    }
+  }
+}
+
+@saveSnapshot(tags) {
+  let now = Date:now()
+
+  // Build tags map
+  var tagsMap = {}
+  each let t tags {
+    tagsMap[t.tag] = t.score
+  }
+
+  // Create snapshot
+  snapshots.push({
+    timestamp: now
+    tags: tagsMap
+  })
+
+  // Trim old snapshots
+  if snapshots.len > MAX_SNAPSHOTS {
+    snapshots = snapshots.slice((snapshots.len - MAX_SNAPSHOTS) snapshots.len)
+  }
+
+  // Save to storage
+  Mk:save("trends_snapshots" {snapshots: snapshots})
+}
 
 // Fetch trending hashtags
 @fetchTrends() {
@@ -49,6 +85,19 @@ var isLoading = true
           t.normalized = t.score / maxScore
         }
       }
+
+      // Sort by score descending (bubble sort)
+      if tags.len > 1 {
+        for let i 0 (tags.len - 1) {
+          for let j 0 (tags.len - i - 1) {
+            if tags[j].score < tags[j + 1].score {
+              let temp = tags[j]
+              tags[j] = tags[j + 1]
+              tags[j + 1] = temp
+            }
+          }
+        }
+      }
     }
   }
 
@@ -61,22 +110,74 @@ var isLoading = true
   return Math:floor(size)
 }
 
+// Fetch posts for a tag
+@fetchPostsForTag(tag) {
+  var posts = []
+
+  eval {
+    let result = Mk:api("notes/search-by-tag" {
+      tag: tag
+      limit: 3
+    })
+
+    if Core:type(result) == "arr" {
+      posts = result
+    }
+  }
+
+  // Fallback to notes/search if needed
+  if posts.len == 0 {
+    eval {
+      let result = Mk:api("notes/search" {
+        query: `#{tag}`
+        limit: 3
+      })
+
+      if Core:type(result) == "arr" {
+        posts = result
+      }
+    }
+  }
+
+  return posts
+}
+
 // Render hashtag buttons
 @renderTags(tags) {
   var buttons = []
+  var index = 0
 
   each let tag tags {
+    // Top 5 tags are primary (highlighted)
+    let isPrimary = index < 5
+
     let btn = Ui:C:button({
       text: `#{tag.tag}`
       rounded: true
+      primary: isPrimary
       onClick: @() {
-        // Show tag info
-        let msg = `Tag: {tag.tag}{Core:lf}Score: {Core:to_str(tag.score)}`
-        Mk:dialog("Hashtag Info" msg "info")
+        // Fetch and show posts
+        let posts = fetchPostsForTag(tag.tag)
+
+        if posts.len > 0 {
+          var msg = `Recent posts for #{tag.tag}:{Core:lf}{Core:lf}`
+
+          each let post posts {
+            if Core:type(post.text) == "str" {
+              let preview = post.text.slice(0 100)
+              msg = `{msg}- {preview}{Core:lf}{Core:lf}`
+            }
+          }
+
+          Mk:dialog("Posts" msg "info")
+        } else {
+          Mk:dialog("No Posts" `No recent posts found for #{tag.tag}` "info")
+        }
       }
     })
 
     buttons.push(btn)
+    index = index + 1
   }
 
   return buttons
@@ -107,7 +208,7 @@ var isLoading = true
 
     // Status
     content.push(Ui:C:text({
-      text: `Tags: {currentTags.len}`
+      text: `Tags: {currentTags.len} | Snapshots: {snapshots.len}`
     }))
 
     // Tag buttons
@@ -133,15 +234,27 @@ var isLoading = true
 
   currentTags = fetchTrends()
 
+  // Save snapshot if we got tags
+  if currentTags.len > 0 {
+    saveSnapshot(currentTags)
+  }
+
   isLoading = false
   render()
 }
 
 // Initialize
+loadSnapshots()
+
 isLoading = true
 render()
 
 currentTags = fetchTrends()
+
+// Save initial snapshot
+if currentTags.len > 0 {
+  saveSnapshot(currentTags)
+}
 
 isLoading = false
 render()
