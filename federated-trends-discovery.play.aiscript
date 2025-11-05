@@ -1,0 +1,559 @@
+/// @ 0.18.0
+/**
+ * Federated Trends Discovery for Misskey/Sharkey
+ * SPEC-001-Misskey Play — Federated Content Discovery
+ *
+ * Displays trending hashtags and media from local instance and mutual servers
+ * No external aggregators - pure AiScript implementation
+ */
+
+// ==================== Configuration & State ====================
+
+let CONFIG = {
+  MAX_SNAPSHOTS: 12,
+  REFRESH_INTERVAL: 600000, // 10 minutes
+  MAX_TAGS_DISPLAY: 30,
+  MAX_MEDIA_ITEMS: 25,
+  MAX_VIDEO_EMBEDS: 3,
+  FONT_MIN: 14,
+  FONT_MAX: 36,
+  FONT_SCALE: 22,
+  MAX_MUTUAL_PROBES: 8,
+  TAG_FETCH_LIMIT: 25,
+  POST_SAMPLE_LIMIT: 3
+}
+
+var state = {
+  snapshots: [],
+  localTags: {},
+  mutualCandidates: [],
+  enabledSources: ["local"],
+  sourceWeights: {local: 1.0},
+  currentTags: [],
+  mediaPosts: [],
+  isLoading: false,
+  selectedTimeWindow: "current"
+}
+
+// ==================== Storage & Persistence ====================
+
+@loadSnapshots() {
+  let stored = Mk:load("trends_snapshots")
+  if (Core:type(stored) == "obj") {
+    if (Core:type(stored.snapshots) == "arr") {
+      state.snapshots = stored.snapshots
+    }
+  }
+}
+
+@saveSnapshots() {
+  Mk:save("trends_snapshots", {snapshots: state.snapshots})
+}
+
+@addSnapshot(sourceName, tagsMap) {
+  let now = Date:now()
+  let snapshot = {
+    timestamp: now,
+    sources: {}
+  }
+  snapshot.sources[sourceName] = {tags: tagsMap}
+
+  state.snapshots.push(snapshot)
+
+  // Trim to max snapshots
+  if (state.snapshots.len > CONFIG.MAX_SNAPSHOTS) {
+    state.snapshots = state.snapshots.slice((state.snapshots.len - CONFIG.MAX_SNAPSHOTS), state.snapshots.len)
+  }
+
+  saveSnapshots()
+}
+
+// ==================== API Helpers ====================
+
+@fetchLocalTrends() {
+  // Fetch local trending hashtags
+  var trends = null
+  try {
+    trends = Mk:api("hashtags/trend", {limit: CONFIG.TAG_FETCH_LIMIT})
+  } catch {
+    return null
+  }
+
+  if (Core:type(trends) == "arr") {
+    var tagsMap = {}
+    each (let item, trends) {
+      if (Core:type(item) == "obj") {
+        let tag = item.tag
+        let score = if (Core:type(item.usersCount) == "num") { item.usersCount } else {
+          if (Core:type(item.chart) == "arr") {
+            // Sum chart values
+            var sum = 0
+            each (let val, item.chart) { sum = (sum + val) }
+            sum
+          } else { 1 }
+        }
+        tagsMap[tag] = score
+      }
+    }
+    return tagsMap
+  }
+
+  return null
+}
+
+@fetchPostsForTag(tag, origin) {
+  // Fetch sample posts for a hashtag
+  var posts = []
+
+  if (origin == "local") {
+    try {
+      // Try notes/search-by-tag endpoint
+      var result = Mk:api("notes/search-by-tag", {
+        tag: tag,
+        limit: CONFIG.POST_SAMPLE_LIMIT
+      })
+
+      if (Core:type(result) == "arr") {
+        posts = result
+      }
+    } catch {
+      // Fallback to notes/search
+      try {
+        var query = `#{tag}`
+        var result = Mk:api("notes/search", {
+          query: query,
+          limit: CONFIG.POST_SAMPLE_LIMIT
+        })
+        if (Core:type(result) == "arr") {
+          posts = result
+        }
+      } catch {
+        // Could not fetch posts
+      }
+    }
+  }
+
+  return posts
+}
+
+@detectMutualServers() {
+  // Get following list to detect mutual servers
+  var following = []
+  try {
+    following = Mk:api("users/following", {
+      userId: USER_ID,
+      limit: 100
+    })
+  } catch {
+    // Try alternative endpoint
+    try {
+      following = Mk:api("i/following", {limit: 100})
+    } catch {
+      return []
+    }
+  }
+
+  if (Core:type(following) != "arr") { return [] }
+
+  var hosts = []
+  each (let item, following) {
+    if (Core:type(item) == "obj") {
+      let followee = if (Core:type(item.followee) == "obj") { item.followee } else { item }
+      if (Core:type(followee.host) == "str") {
+        if (followee.host != null) {
+          if (!hosts.incl(followee.host)) {
+            hosts.push(followee.host)
+          }
+        }
+      }
+    }
+  }
+
+  // Limit probes
+  if (hosts.len > CONFIG.MAX_MUTUAL_PROBES) {
+    hosts = hosts.slice(0, CONFIG.MAX_MUTUAL_PROBES)
+  }
+
+  return hosts
+}
+
+// ==================== Tag Processing & Normalization ====================
+
+@normalizeScores(tagsMap) {
+  // Normalize tag scores to 0-1 range
+  var tags = []
+  each (let key, Core:obj_keys(tagsMap)) {
+    tags.push({tag: key, rawScore: tagsMap[key]})
+  }
+
+  if (tags.len == 0) { return [] }
+
+  // Find max score
+  var maxScore = 0
+  each (let t, tags) {
+    if (t.rawScore > maxScore) { maxScore = t.rawScore }
+  }
+
+  if (maxScore == 0) { maxScore = 1 }
+
+  // Normalize
+  each (let t, tags) {
+    t.normalizedScore = (t.rawScore / maxScore)
+  }
+
+  return tags
+}
+
+@aggregateTags() {
+  // Aggregate tags from all enabled sources
+  var aggregated = {}
+
+  each (let snapshot, state.snapshots) {
+    if (Core:type(snapshot.sources) == "obj") {
+      each (let sourceName, Core:obj_keys(snapshot.sources)) {
+        if (state.enabledSources.incl(sourceName)) {
+          let weight = if (Core:type(state.sourceWeights[sourceName]) == "num") {
+            state.sourceWeights[sourceName]
+          } else { 1.0 }
+
+          let sourceData = snapshot.sources[sourceName]
+          if (Core:type(sourceData.tags) == "obj") {
+            each (let tag, Core:obj_keys(sourceData.tags)) {
+              let score = sourceData.tags[tag]
+              let weighted = (score * weight)
+
+              if (Core:type(aggregated[tag]) == "num") {
+                aggregated[tag] = (aggregated[tag] + weighted)
+              } else {
+                aggregated[tag] = weighted
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return aggregated
+}
+
+@getTopTags(limit) {
+  let aggregated = aggregateTags()
+  let normalized = normalizeScores(aggregated)
+
+  // Sort by score descending
+  var sorted = []
+  each (let tag, normalized) {
+    sorted.push(tag)
+  }
+
+  // Bubble sort (AiScript doesn't have native sort)
+  for (let i = 0, (sorted.len - 1)) {
+    for (let j = 0, (sorted.len - i - 1)) {
+      if (sorted[j].normalizedScore < sorted[j + 1].normalizedScore) {
+        let temp = sorted[j]
+        sorted[j] = sorted[j + 1]
+        sorted[j + 1] = temp
+      }
+    }
+  }
+
+  // Take top N
+  if (sorted.len > limit) {
+    sorted = sorted.slice(0, limit)
+  }
+
+  return sorted
+}
+
+@collectMediaPosts() {
+  // Collect posts with media from trending tags
+  var mediaPosts = []
+  var imageCount = 0
+  var videoCount = 0
+
+  each (let tagObj, state.currentTags) {
+    if (mediaPosts.len >= CONFIG.MAX_MEDIA_ITEMS) { break }
+
+    let posts = fetchPostsForTag(tagObj.tag, "local")
+
+    each (let post, posts) {
+      if (mediaPosts.len >= CONFIG.MAX_MEDIA_ITEMS) { break }
+
+      if (Core:type(post.files) == "arr") {
+        if (post.files.len > 0) {
+          var hasImage = false
+          var hasVideo = false
+
+          each (let file, post.files) {
+            if (Core:type(file.type) == "str") {
+              if (file.type.starts_with("image/")) {
+                hasImage = true
+              }
+              if (file.type.starts_with("video/")) {
+                hasVideo = true
+              }
+            }
+          }
+
+          if (hasImage || hasVideo) {
+            mediaPosts.push({
+              post: post,
+              hasImage: hasImage,
+              hasVideo: hasVideo
+            })
+          }
+        }
+      }
+    }
+  }
+
+  return mediaPosts
+}
+
+// ==================== UI Rendering ====================
+
+@calculateFontSize(normalizedScore) {
+  let size = (CONFIG.FONT_MIN + (normalizedScore * CONFIG.FONT_SCALE))
+  if (size > CONFIG.FONT_MAX) { size = CONFIG.FONT_MAX }
+  if (size < CONFIG.FONT_MIN) { size = CONFIG.FONT_MIN }
+  return Math:floor(size)
+}
+
+@calculateFontWeight(normalizedScore) {
+  let weight = (400 + (normalizedScore * 300))
+  if (weight > 700) { weight = 700 }
+  return Math:floor(weight)
+}
+
+@renderHashtagCloud(tags) {
+  var elements = []
+
+  each (let tagObj, tags) {
+    let fontSize = calculateFontSize(tagObj.normalizedScore)
+    let fontWeight = calculateFontWeight(tagObj.normalizedScore)
+
+    let tagButton = Ui:C:button({
+      text: `#{tagObj.tag}`,
+      rounded: true,
+      primary: false,
+      onClick: @() {
+        onTagClick(tagObj.tag)
+      }
+    })
+
+    elements.push(tagButton)
+  }
+
+  return Ui:C:container({
+    children: elements,
+    align: "left",
+    bgColor: "#00000000"
+  })
+}
+
+@renderMediaWall(mediaPosts) {
+  var elements = []
+
+  each (let mediaItem, mediaPosts) {
+    let post = mediaItem.post
+
+    if (Core:type(post.files) == "arr") {
+      if (post.files.len > 0) {
+        let file = post.files[0]
+
+        // Create a button to view the post
+        let mediaBtn = Ui:C:button({
+          text: if (mediaItem.hasVideo) { "🎥 Video" } else { "🖼️ Image" },
+          rounded: true,
+          onClick: @() {
+            onMediaClick(post)
+          }
+        })
+
+        elements.push(mediaBtn)
+      }
+    }
+  }
+
+  if (elements.len == 0) {
+    elements.push(Ui:C:text({
+      text: "No trending media available"
+    }))
+  }
+
+  return Ui:C:container({
+    children: elements,
+    align: "left",
+    bgColor: "#00000000"
+  })
+}
+
+@onTagClick(tag) {
+  // Show posts for this tag
+  let posts = fetchPostsForTag(tag, "local")
+
+  var postTexts = []
+  each (let post, posts) {
+    if (Core:type(post.text) == "str") {
+      postTexts.push(post.text.slice(0, 100))
+    } else {
+      postTexts.push("(no text)")
+    }
+  }
+
+  if (postTexts.len == 0) {
+    Ui:C:postFormButton({
+      text: `Search #{tag}`,
+      form: {
+        text: `#{tag} `
+      }
+    })
+  } else {
+    let message = `Recent posts for #{tag}:\n\n`
+    each (let text, postTexts) {
+      message = `{message}- {text}\n`
+    }
+    Mk:dialog("Posts", message, "info")
+  }
+}
+
+@onMediaClick(post) {
+  // Show post details
+  var message = ""
+
+  if (Core:type(post.user) == "obj") {
+    message = `Posted by @{post.user.username}\n\n`
+  }
+
+  if (Core:type(post.text) == "str") {
+    message = `{message}{post.text}\n\n`
+  }
+
+  if (Core:type(post.files) == "arr") {
+    message = `{message}Media files: {post.files.len}`
+  }
+
+  Mk:dialog("Post Preview", message, "info")
+}
+
+@renderControls() {
+  let refreshBtn = Ui:C:button({
+    text: "🔄 Refresh Trends",
+    onClick: @() {
+      refreshTrends()
+    }
+  })
+
+  let statusText = Ui:C:text({
+    text: `Sources: {state.enabledSources.len} | Tags: {state.currentTags.len} | Media: {state.mediaPosts.len}`
+  })
+
+  return Ui:C:container({
+    children: [refreshBtn, statusText],
+    align: "center",
+    bgColor: "#00000000"
+  })
+}
+
+@renderLoadingState() {
+  return Ui:C:container({
+    children: [
+      Ui:C:text({text: "⏳ Loading trends..."})
+    ],
+    align: "center"
+  })
+}
+
+@renderErrorState(message) {
+  return Ui:C:container({
+    children: [
+      Ui:C:text({text: `⚠️ {message}`})
+    ],
+    align: "center"
+  })
+}
+
+// ==================== Main Application Logic ====================
+
+@refreshTrends() {
+  state.isLoading = true
+  render()
+
+  // Fetch local trends
+  let localTags = fetchLocalTrends()
+
+  if (localTags != null) {
+    state.localTags = localTags
+    addSnapshot("local", localTags)
+  }
+
+  // Get top tags
+  state.currentTags = getTopTags(CONFIG.MAX_TAGS_DISPLAY)
+
+  // Collect media
+  state.mediaPosts = collectMediaPosts()
+
+  state.isLoading = false
+  render()
+}
+
+@init() {
+  // Load cached data
+  loadSnapshots()
+
+  // Initial fetch
+  refreshTrends()
+
+  // Detect mutual servers (async, don't block UI)
+  let mutualHosts = detectMutualServers()
+  state.mutualCandidates = mutualHosts
+}
+
+@render() {
+  var mainContent = []
+
+  if (state.isLoading) {
+    mainContent.push(renderLoadingState())
+  } else {
+    // Controls
+    mainContent.push(renderControls())
+
+    // Title
+    mainContent.push(Ui:C:text({
+      text: "# 📊 Trending Hashtags",
+      size: 1.2
+    }))
+
+    // Hashtag cloud
+    if (state.currentTags.len > 0) {
+      mainContent.push(renderHashtagCloud(state.currentTags))
+    } else {
+      mainContent.push(Ui:C:text({
+        text: "No trending tags available. Try refreshing!"
+      }))
+    }
+
+    // Spacer
+    mainContent.push(Ui:C:text({text: " "}))
+
+    // Title
+    mainContent.push(Ui:C:text({
+      text: "# 🎬 Trending Media",
+      size: 1.2
+    }))
+
+    // Media wall
+    mainContent.push(renderMediaWall(state.mediaPosts))
+  }
+
+  Ui:render(mainContent)
+}
+
+// ==================== Entry Point ====================
+
+init()
+render()
+
+// Setup periodic refresh (every 10 minutes)
+// Note: AiScript Play doesn't support setInterval, so users must manually refresh
