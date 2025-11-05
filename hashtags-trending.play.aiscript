@@ -278,7 +278,7 @@ var snapshots = []
   }
 }
 
-// Render hashtag cloud (inline, sized by popularity)
+// Render hashtag cloud (inline word cloud)
 @renderTags(tags) {
   var buttons = []
 
@@ -290,18 +290,9 @@ var snapshots = []
 
     let tagCopy = tag.tag // Capture for closure
 
-    // Create sized hashtag text using MFM
-    let sizeScale = getTagSizeScale(tag.normalized)
-    var tagText = `$[{sizeScale} #{tag.tag}]`
-
-    // Make bold if top 5
-    if isPrimary {
-      tagText = `$[{sizeScale} **#{tag.tag}**]`
-    }
-
-    // Create button with sized text
+    // Create button with tag name
     buttons.push(Ui:C:button({
-      text: tagText
+      text: `#{tag.tag}`
       rounded: true
       primary: isPrimary
       onClick: @() {
