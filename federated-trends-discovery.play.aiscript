@@ -1,604 +1,148 @@
 /// @ 0.18.0
-/**
- * Federated Trends Discovery for Misskey/Sharkey
- * SPEC-001-Misskey Play — Federated Content Discovery
- *
- * Displays trending hashtags and media from local instance and mutual servers
- * No external aggregators - pure AiScript implementation
- */
 
-// ==================== Configuration & State ====================
+// Federated Trends Discovery for Misskey/Sharkey
+// SPEC-001 Implementation
 
-let CONFIG = {
-  MAX_SNAPSHOTS: 12
-  REFRESH_INTERVAL: 600000
-  MAX_TAGS_DISPLAY: 30
-  MAX_MEDIA_ITEMS: 25
-  MAX_VIDEO_EMBEDS: 3
-  FONT_MIN: 14
-  FONT_MAX: 36
-  FONT_SCALE: 22
-  MAX_MUTUAL_PROBES: 8
-  TAG_FETCH_LIMIT: 25
-  POST_SAMPLE_LIMIT: 3
-}
+// Configuration
+let MAX_TAGS = 30
+let FONT_MIN = 14
+let FONT_MAX = 36
 
-var state = {
-  snapshots: []
-  localTags: {}
-  mutualCandidates: []
-  enabledSources: ["local"]
-  sourceWeights: {local: 1.0}
-  currentTags: []
-  mediaPosts: []
-  isLoading: false
-  selectedTimeWindow: "current"
-}
+// State
+var currentTags = []
+var isLoading = true
 
-// ==================== Storage & Persistence ====================
-
-@loadSnapshots() {
-  let stored = Mk:load("trends_snapshots")
-  if Core:type(stored) == "obj" {
-    if Core:type(stored.snapshots) == "arr" {
-      state.snapshots = stored.snapshots
-    }
-  }
-}
-
-@saveSnapshots() {
-  Mk:save("trends_snapshots" {snapshots: state.snapshots})
-}
-
-@addSnapshot(sourceName tagsMap) {
-  let now = Date:now()
-
-  // Build sources object
-  var sources = {}
-  sources[sourceName] = {tags: tagsMap}
-
-  let snapshot = {
-    timestamp: now
-    sources: sources
-  }
-
-  state.snapshots.push(snapshot)
-
-  // Trim to max snapshots
-  if state.snapshots.len > CONFIG.MAX_SNAPSHOTS {
-    state.snapshots = state.snapshots.slice((state.snapshots.len - CONFIG.MAX_SNAPSHOTS) state.snapshots.len)
-  }
-
-  saveSnapshots()
-}
-
-// ==================== API Helpers ====================
-
-@fetchLocalTrends() {
-  // Fetch local trending hashtags
-  var trends = null
-  var tagsMap = {}
+// Fetch trending hashtags
+@fetchTrends() {
+  var tags = []
 
   eval {
-    trends = Mk:api("hashtags/trend" {limit: CONFIG.TAG_FETCH_LIMIT})
+    let result = Mk:api("hashtags/trend" {limit: 25})
 
-    if Core:type(trends) == "arr" {
-      each let item trends {
+    if Core:type(result) == "arr" {
+      // Process each trend
+      var maxScore = 0
+
+      each let item result {
         if Core:type(item) == "obj" {
-          let tag = item.tag
           var score = 1
 
           if Core:type(item.usersCount) == "num" {
             score = item.usersCount
-          } elif Core:type(item.chart) == "arr" {
-            // Sum chart values
-            score = 0
-            each let val item.chart {
-              score = score + val
-            }
           }
 
-          tagsMap[tag] = score
+          if score > maxScore {
+            maxScore = score
+          }
+
+          tags.push({
+            tag: item.tag
+            score: score
+            normalized: 0
+          })
+        }
+      }
+
+      // Normalize scores
+      if maxScore > 0 {
+        each let t tags {
+          t.normalized = t.score / maxScore
         }
       }
     }
-  }
-
-  if Core:type(trends) == "null" {
-    return null
-  }
-
-  return tagsMap
-}
-
-@fetchPostsForTag(tag origin) {
-  // Fetch sample posts for a hashtag
-  var posts = []
-
-  if origin == "local" {
-    eval {
-      // Try notes/search-by-tag endpoint
-      var result = Mk:api("notes/search-by-tag" {
-        tag: tag
-        limit: CONFIG.POST_SAMPLE_LIMIT
-      })
-
-      if Core:type(result) == "arr" {
-        posts = result
-      }
-    }
-
-    // Fallback if needed
-    if posts.len == 0 {
-      eval {
-        let query = `#{tag}`
-        var result = Mk:api("notes/search" {
-          query: query
-          limit: CONFIG.POST_SAMPLE_LIMIT
-        })
-
-        if Core:type(result) == "arr" {
-          posts = result
-        }
-      }
-    }
-  }
-
-  return posts
-}
-
-@detectMutualServers() {
-  // Get following list to detect mutual servers
-  var following = []
-
-  eval {
-    following = Mk:api("i/following" {limit: 100})
-  }
-
-  if Core:type(following) != "arr" {
-    return []
-  }
-
-  var hosts = []
-  each let item following {
-    if Core:type(item) == "obj" {
-      var followee = item
-      if Core:type(item.followee) == "obj" {
-        followee = item.followee
-      }
-
-      if Core:type(followee.host) == "str" {
-        if followee.host != null {
-          var alreadyExists = false
-          each let h hosts {
-            if h == followee.host {
-              alreadyExists = true
-            }
-          }
-
-          if !alreadyExists {
-            hosts.push(followee.host)
-          }
-        }
-      }
-    }
-  }
-
-  // Limit probes
-  if hosts.len > CONFIG.MAX_MUTUAL_PROBES {
-    hosts = hosts.slice(0 CONFIG.MAX_MUTUAL_PROBES)
-  }
-
-  return hosts
-}
-
-// ==================== Tag Processing & Normalization ====================
-
-@normalizeScores(tagsMap) {
-  // Normalize tag scores to 0-1 range
-  var tags = []
-  let keys = Core:obj_keys(tagsMap)
-
-  each let key keys {
-    tags.push({tag: key rawScore: tagsMap[key]})
-  }
-
-  if tags.len == 0 {
-    return []
-  }
-
-  // Find max score
-  var maxScore = 0
-  each let t tags {
-    if t.rawScore > maxScore {
-      maxScore = t.rawScore
-    }
-  }
-
-  if maxScore == 0 {
-    maxScore = 1
-  }
-
-  // Normalize
-  each let t tags {
-    t.normalizedScore = (t.rawScore / maxScore)
   }
 
   return tags
 }
 
-@aggregateTags() {
-  // Aggregate tags from all enabled sources
-  var aggregated = {}
-
-  each let snapshot state.snapshots {
-    if Core:type(snapshot.sources) == "obj" {
-      let sourceKeys = Core:obj_keys(snapshot.sources)
-
-      each let sourceName sourceKeys {
-        var isEnabled = false
-        each let enabled state.enabledSources {
-          if enabled == sourceName {
-            isEnabled = true
-          }
-        }
-
-        if isEnabled {
-          var weight = 1.0
-          if Core:type(state.sourceWeights[sourceName]) == "num" {
-            weight = state.sourceWeights[sourceName]
-          }
-
-          let sourceData = snapshot.sources[sourceName]
-          if Core:type(sourceData.tags) == "obj" {
-            let tagKeys = Core:obj_keys(sourceData.tags)
-
-            each let tag tagKeys {
-              let score = sourceData.tags[tag]
-              let weighted = score * weight
-
-              if Core:type(aggregated[tag]) == "num" {
-                aggregated[tag] = aggregated[tag] + weighted
-              } else {
-                aggregated[tag] = weighted
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return aggregated
-}
-
-@getTopTags(limit) {
-  let aggregated = aggregateTags()
-  let normalized = normalizeScores(aggregated)
-
-  // Sort by score descending (bubble sort)
-  var sorted = normalized
-
-  if sorted.len > 1 {
-    for let i 0 (sorted.len - 1) {
-      for let j 0 (sorted.len - i - 1) {
-        if sorted[j].normalizedScore < sorted[j + 1].normalizedScore {
-          let temp = sorted[j]
-          sorted[j] = sorted[j + 1]
-          sorted[j + 1] = temp
-        }
-      }
-    }
-  }
-
-  // Take top N
-  if sorted.len > limit {
-    sorted = sorted.slice(0 limit)
-  }
-
-  return sorted
-}
-
-@collectMediaPosts() {
-  // Collect posts with media from trending tags
-  var mediaPosts = []
-  var imageCount = 0
-  var videoCount = 0
-
-  each let tagObj state.currentTags {
-    if mediaPosts.len >= CONFIG.MAX_MEDIA_ITEMS {
-      break
-    }
-
-    let posts = fetchPostsForTag(tagObj.tag "local")
-
-    each let post posts {
-      if mediaPosts.len >= CONFIG.MAX_MEDIA_ITEMS {
-        break
-      }
-
-      if Core:type(post.files) == "arr" {
-        if post.files.len > 0 {
-          var hasImage = false
-          var hasVideo = false
-
-          each let file post.files {
-            if Core:type(file.type) == "str" {
-              if file.type.incl("image/") {
-                hasImage = true
-              }
-              if file.type.incl("video/") {
-                hasVideo = true
-              }
-            }
-          }
-
-          if hasImage || hasVideo {
-            mediaPosts.push({
-              post: post
-              hasImage: hasImage
-              hasVideo: hasVideo
-            })
-          }
-        }
-      }
-    }
-  }
-
-  return mediaPosts
-}
-
-// ==================== UI Rendering ====================
-
-@calculateFontSize(normalizedScore) {
-  var size = CONFIG.FONT_MIN + (normalizedScore * CONFIG.FONT_SCALE)
-  if size > CONFIG.FONT_MAX {
-    size = CONFIG.FONT_MAX
-  }
-  if size < CONFIG.FONT_MIN {
-    size = CONFIG.FONT_MIN
-  }
+// Calculate font size
+@getFontSize(normalized) {
+  let size = FONT_MIN + (normalized * (FONT_MAX - FONT_MIN))
   return Math:floor(size)
 }
 
-@calculateFontWeight(normalizedScore) {
-  var weight = 400 + (normalizedScore * 300)
-  if weight > 700 {
-    weight = 700
-  }
-  return Math:floor(weight)
-}
+// Render hashtag buttons
+@renderTags(tags) {
+  var buttons = []
 
-@renderHashtagCloud(tags) {
-  var elements = []
-
-  each let tagObj tags {
-    let fontSize = calculateFontSize(tagObj.normalizedScore)
-    let fontWeight = calculateFontWeight(tagObj.normalizedScore)
-
-    let tagButton = Ui:C:button({
-      text: `#{tagObj.tag}`
+  each let tag tags {
+    let btn = Ui:C:button({
+      text: Core:to_str(tag.tag)
       rounded: true
-      primary: false
       onClick: @() {
-        onTagClick(tagObj.tag)
+        // Show tag info
+        let msg = "Tag: " + tag.tag + Core:lf + "Score: " + Core:to_str(tag.score)
+        Mk:dialog("Hashtag Info" msg "info")
       }
     })
 
-    elements.push(tagButton)
+    buttons.push(btn)
   }
 
-  return Ui:C:container({
-    children: elements
-    align: "left"
-    bgColor: "#00000000"
-  })
+  return buttons
 }
 
-@renderMediaWall(mediaPosts) {
-  var elements = []
-
-  each let mediaItem mediaPosts {
-    let post = mediaItem.post
-
-    if Core:type(post.files) == "arr" {
-      if post.files.len > 0 {
-        var btnText = "🖼️ Image"
-        if mediaItem.hasVideo {
-          btnText = "🎥 Video"
-        }
-
-        let mediaBtn = Ui:C:button({
-          text: btnText
-          rounded: true
-          onClick: @() {
-            onMediaClick(post)
-          }
-        })
-
-        elements.push(mediaBtn)
-      }
-    }
-  }
-
-  if elements.len == 0 {
-    elements.push(Ui:C:text({
-      text: "No trending media available"
-    }))
-  }
-
-  return Ui:C:container({
-    children: elements
-    align: "left"
-    bgColor: "#00000000"
-  })
-}
-
-@onTagClick(tag) {
-  // Show posts for this tag
-  let posts = fetchPostsForTag(tag "local")
-
-  var postTexts = []
-  each let post posts {
-    if Core:type(post.text) == "str" {
-      postTexts.push(post.text.slice(0 100))
-    } else {
-      postTexts.push("(no text)")
-    }
-  }
-
-  if postTexts.len == 0 {
-    Ui:C:postFormButton({
-      text: `Search #{tag}`
-      form: {
-        text: `#{tag} `
-      }
-    })
-  } else {
-    var message = `Recent posts for #{tag}:`
-    message = message + Core:lf + Core:lf
-
-    each let text postTexts {
-      message = message + "- " + text + Core:lf
-    }
-
-    Mk:dialog("Posts" message "info")
-  }
-}
-
-@onMediaClick(post) {
-  // Show post details
-  var message = ""
-
-  if Core:type(post.user) == "obj" {
-    message = `Posted by @{post.user.username}` + Core:lf + Core:lf
-  }
-
-  if Core:type(post.text) == "str" {
-    message = message + post.text + Core:lf + Core:lf
-  }
-
-  if Core:type(post.files) == "arr" {
-    message = message + `Media files: {post.files.len}`
-  }
-
-  Mk:dialog("Post Preview" message "info")
-}
-
-@renderControls() {
-  let refreshBtn = Ui:C:button({
-    text: "🔄 Refresh Trends"
-    onClick: @() {
-      refreshTrends()
-    }
-  })
-
-  let statusText = Ui:C:text({
-    text: `Sources: {state.enabledSources.len} | Tags: {state.currentTags.len} | Media: {state.mediaPosts.len}`
-  })
-
-  return Ui:C:container({
-    children: [refreshBtn statusText]
-    align: "center"
-    bgColor: "#00000000"
-  })
-}
-
-@renderLoadingState() {
-  return Ui:C:container({
-    children: [
-      Ui:C:text({text: "⏳ Loading trends..."})
-    ]
-    align: "center"
-  })
-}
-
-@renderErrorState(message) {
-  return Ui:C:container({
-    children: [
-      Ui:C:text({text: `⚠️ {message}`})
-    ]
-    align: "center"
-  })
-}
-
-// ==================== Main Application Logic ====================
-
-@refreshTrends() {
-  state.isLoading = true
-  render()
-
-  // Fetch local trends
-  let localTags = fetchLocalTrends()
-
-  if localTags != null {
-    state.localTags = localTags
-    addSnapshot("local" localTags)
-  }
-
-  // Get top tags
-  state.currentTags = getTopTags(CONFIG.MAX_TAGS_DISPLAY)
-
-  // Collect media
-  state.mediaPosts = collectMediaPosts()
-
-  state.isLoading = false
-  render()
-}
-
-@init() {
-  // Load cached data
-  loadSnapshots()
-
-  // Initial fetch
-  refreshTrends()
-
-  // Detect mutual servers (async, don't block UI)
-  let mutualHosts = detectMutualServers()
-  state.mutualCandidates = mutualHosts
-}
-
+// Main render
 @render() {
-  var mainContent = []
+  var content = []
 
-  if state.isLoading {
-    mainContent.push(renderLoadingState())
+  // Header
+  content.push(Ui:C:text({
+    text: "Trending Hashtags"
+    size: 1.5
+  }))
+
+  if isLoading {
+    content.push(Ui:C:text({
+      text: "Loading..."
+    }))
   } else {
-    // Controls
-    mainContent.push(renderControls())
-
-    // Title
-    mainContent.push(Ui:C:text({
-      text: "# 📊 Trending Hashtags"
-      size: 1.2
+    // Refresh button
+    content.push(Ui:C:button({
+      text: "Refresh"
+      onClick: @() {
+        doRefresh()
+      }
     }))
 
-    // Hashtag cloud
-    if state.currentTags.len > 0 {
-      mainContent.push(renderHashtagCloud(state.currentTags))
+    // Status
+    let statusMsg = "Tags: " + Core:to_str(currentTags.len)
+    content.push(Ui:C:text({
+      text: statusMsg
+    }))
+
+    // Tag buttons
+    if currentTags.len > 0 {
+      let tagButtons = renderTags(currentTags)
+      each let btn tagButtons {
+        content.push(btn)
+      }
     } else {
-      mainContent.push(Ui:C:text({
-        text: "No trending tags available. Try refreshing!"
+      content.push(Ui:C:text({
+        text: "No trending tags found"
       }))
     }
-
-    // Spacer
-    mainContent.push(Ui:C:text({text: " "}))
-
-    // Title
-    mainContent.push(Ui:C:text({
-      text: "# 🎬 Trending Media"
-      size: 1.2
-    }))
-
-    // Media wall
-    mainContent.push(renderMediaWall(state.mediaPosts))
   }
 
-  Ui:render(mainContent)
+  Ui:render(content)
 }
 
-// ==================== Entry Point ====================
+// Refresh function
+@doRefresh() {
+  isLoading = true
+  render()
 
-init()
+  currentTags = fetchTrends()
+
+  isLoading = false
+  render()
+}
+
+// Initialize
+isLoading = true
+render()
+
+currentTags = fetchTrends()
+
+isLoading = false
 render()
