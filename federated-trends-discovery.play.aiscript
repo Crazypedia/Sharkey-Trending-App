@@ -67,11 +67,11 @@ var isLoading = true
 
   each let tag tags {
     let btn = Ui:C:button({
-      text: Core:to_str(tag.tag)
+      text: `#{tag.tag}`
       rounded: true
       onClick: @() {
         // Show tag info
-        let msg = "Tag: " + tag.tag + Core:lf + "Score: " + Core:to_str(tag.score)
+        let msg = `Tag: {tag.tag}{Core:lf}Score: {Core:to_str(tag.score)}`
         Mk:dialog("Hashtag Info" msg "info")
       }
     })
@@ -87,8 +87,8 @@ var isLoading = true
   var content = []
 
   // Header
-  content.push(Ui:C:text({
-    text: "Trending Hashtags"
+  content.push(Ui:C:mfm({
+    text: "# Trending Hashtags"
     size: 1.5
   }))
 
@@ -106,9 +106,8 @@ var isLoading = true
     }))
 
     // Status
-    let statusMsg = "Tags: " + Core:to_str(currentTags.len)
     content.push(Ui:C:text({
-      text: statusMsg
+      text: `Tags: {currentTags.len}`
     }))
 
     // Tag buttons
