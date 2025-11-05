@@ -6,7 +6,6 @@
 // Configuration
 let MAX_TAGS = 30
 let MAX_SNAPSHOTS = 12
-let POST_PREVIEW_LIMIT = 3
 
 // State
 var currentTags = []
@@ -106,84 +105,6 @@ var snapshots = []
   return tags
 }
 
-// Fetch posts for a tag
-@fetchPostsForTag(tag) {
-  var posts = []
-
-  eval {
-    let result = Mk:api("notes/search-by-tag", {
-      tag: tag
-      limit: POST_PREVIEW_LIMIT
-    })
-
-    if Core:type(result) == "arr" {
-      posts = result
-    }
-  }
-
-  // Fallback to notes/search if needed
-  if posts.len == 0 {
-    eval {
-      let result = Mk:api("notes/search", {
-        query: `#{tag}`
-        limit: POST_PREVIEW_LIMIT
-      })
-
-      if Core:type(result) == "arr" {
-        posts = result
-      }
-    }
-  }
-
-  return posts
-}
-
-// Handle tag click
-@handleTagClick(tag) {
-  // Fetch and show posts
-  let posts = fetchPostsForTag(tag)
-
-  if posts.len > 0 {
-    var msg = `Recent posts for #{tag}:{Str:lf}{Str:lf}`
-
-    for (let i = 0, posts.len) {
-      let post = posts[i]
-      if Core:type(post.text) == "str" {
-        let preview = post.text.slice(0, 100)
-        msg = `{msg}- {preview}{Str:lf}{Str:lf}`
-      }
-    }
-
-    Mk:dialog("Posts", msg, "info")
-  } else {
-    Mk:dialog("No Posts", `No recent posts found for #{tag}`, "info")
-  }
-}
-
-// Render hashtag buttons
-@renderTags(tags) {
-  var buttons = []
-
-  for (let index = 0, tags.len) {
-    let tag = tags[index]
-
-    // Top 5 tags are primary (highlighted)
-    let isPrimary = index < 5
-
-    let tagCopy = tag.tag // Capture for closure
-    buttons.push(Ui:C:button({
-      text: `#{tag.tag}`
-      rounded: true
-      primary: isPrimary
-      onClick: @() {
-        handleTagClick(tagCopy)
-      }
-    }))
-  }
-
-  return buttons
-}
-
 // Refresh function
 @doRefresh() {
   isLoading = true
@@ -226,38 +147,25 @@ var snapshots = []
       text: `Tags: {currentTags.len} | Snapshots: {snapshots.len}`
     }))
 
-    // Tag cloud (inline text)
+    // Word cloud (visual display only)
     if currentTags.len > 0 {
-      // Build inline tag cloud text
+      // Build formatted word cloud with visual hierarchy
       var cloudText = ""
+
       for (let i = 0, currentTags.len) {
         let tag = currentTags[i]
-        cloudText = `{cloudText}#{tag.tag}  `
+
+        // Top 5 tags are bold and larger
+        if i < 5 {
+          cloudText = `{cloudText}**#{tag.tag}**   `
+        } else {
+          cloudText = `{cloudText}#{tag.tag}   `
+        }
       }
 
       content.push(Ui:C:mfm({
         text: cloudText
       }))
-
-      // Top 5 clickable tags
-      content.push(Ui:C:text({
-        text: "Click to explore:"
-      }))
-
-      for (let i = 0, 5) {
-        if i < currentTags.len {
-          let tag = currentTags[i]
-          let tagCopy = tag.tag
-          content.push(Ui:C:button({
-            text: `#{tag.tag}`
-            rounded: true
-            primary: true
-            onClick: @() {
-              handleTagClick(tagCopy)
-            }
-          }))
-        }
-      }
     } else {
       content.push(Ui:C:text({
         text: "No trending tags found"
