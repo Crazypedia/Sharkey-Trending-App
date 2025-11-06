@@ -149,22 +149,26 @@ var snapshots = []
 
     // Word cloud (visual display only)
     if currentTags.len > 0 {
-      // Build formatted word cloud with visual hierarchy
+      // Build word cloud - sorted by popularity
       var cloudText = ""
 
       for (let i = 0, currentTags.len) {
         let tag = currentTags[i]
 
-        // Top 5 tags are bold and larger
-        if i < 5 {
-          cloudText = `{cloudText}**#{tag.tag}**   `
-        } else {
-          cloudText = `{cloudText}#{tag.tag}   `
+        // Add separator after top 5 for visual break
+        if i == 5 {
+          cloudText = `{cloudText}{Str:lf}---{Str:lf}`
         }
+
+        cloudText = `{cloudText}#{tag.tag}   `
       }
 
       content.push(Ui:C:mfm({
         text: cloudText
+      }))
+
+      content.push(Ui:C:text({
+        text: "↑ Top 5 most popular above the line"
       }))
     } else {
       content.push(Ui:C:text({
