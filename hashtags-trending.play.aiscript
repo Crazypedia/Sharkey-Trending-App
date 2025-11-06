@@ -109,7 +109,8 @@ var useFederated = FEDERATED_MODE
 
 // Fetch federated hashtags from timeline
 @fetchFederatedTags() {
-  var tags = {}
+  var tagCounts = []
+  var tagMap = {}
 
   eval {
     // Query global/federated timeline for recent posts
@@ -129,10 +130,10 @@ var useFederated = FEDERATED_MODE
               let tag = note.tags[j]
 
               // Count tag occurrences
-              if Core:type(tags[tag]) == "num" {
-                tags[tag] = tags[tag] + 1
+              if Core:type(tagMap[tag]) == "num" {
+                tagMap[tag] = tagMap[tag] + 1
               } else {
-                tags[tag] = 1
+                tagMap[tag] = 1
               }
             }
           }
@@ -141,44 +142,46 @@ var useFederated = FEDERATED_MODE
     }
   }
 
-  return tags
+  // Convert map to array (manual iteration through known tags)
+  // We'll build this during the merge process instead
+  return tagMap
 }
 
 // Merge local and federated trends
 @mergeTrends(localTags, federatedTagMap) {
-  var merged = []
   var tagScores = {}
+  var maxScore = 0
 
   // Add local trending tags with higher weight
   for (let i = 0, localTags.len) {
     let t = localTags[i]
-    tagScores[t.tag] = t.score * 2  // Local trends weighted 2x
-  }
-
-  // Add federated tags
-  let fedKeys = Core:obj_keys(federatedTagMap)
-  for (let i = 0, fedKeys.len) {
-    let tag = fedKeys[i]
-    let count = federatedTagMap[tag]
-
-    if Core:type(tagScores[tag]) == "num" {
-      tagScores[tag] = tagScores[tag] + count
-    } else {
-      tagScores[tag] = count
-    }
-  }
-
-  // Convert to array
-  let allKeys = Core:obj_keys(tagScores)
-  var maxScore = 0
-
-  for (let i = 0, allKeys.len) {
-    let tag = allKeys[i]
-    let score = tagScores[tag]
+    let score = t.score * 2  // Local trends weighted 2x
+    tagScores[t.tag] = score
 
     if score > maxScore {
       maxScore = score
     }
+  }
+
+  // Add federated tag counts to existing local tags
+  for (let i = 0, localTags.len) {
+    let tag = localTags[i].tag
+    let fedCount = federatedTagMap[tag]
+
+    if Core:type(fedCount) == "num" {
+      tagScores[tag] = tagScores[tag] + fedCount
+
+      if tagScores[tag] > maxScore {
+        maxScore = tagScores[tag]
+      }
+    }
+  }
+
+  // Build result array from local tags
+  var merged = []
+  for (let i = 0, localTags.len) {
+    let tag = localTags[i].tag
+    let score = tagScores[tag]
 
     merged.push({
       tag: tag
