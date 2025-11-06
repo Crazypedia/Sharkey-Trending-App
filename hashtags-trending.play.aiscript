@@ -6,11 +6,13 @@
 // Configuration
 let MAX_TAGS = 30
 let MAX_SNAPSHOTS = 12
+let FEDERATED_MODE = true  // Include federated timeline hashtags
 
 // State
 var currentTags = []
 var isLoading = true
 var snapshots = []
+var useFederated = FEDERATED_MODE
 
 // Storage functions
 @loadSnapshots() {
@@ -105,12 +107,129 @@ var snapshots = []
   return tags
 }
 
+// Fetch federated hashtags from timeline
+@fetchFederatedTags() {
+  var tags = {}
+
+  eval {
+    // Query global/federated timeline for recent posts
+    let result = Mk:api("notes/global-timeline", {
+      limit: 100
+      withFiles: false
+    })
+
+    if Core:type(result) == "arr" {
+      // Extract hashtags from posts
+      for (let i = 0, result.len) {
+        let note = result[i]
+
+        if Core:type(note) == "obj" {
+          if Core:type(note.tags) == "arr" {
+            for (let j = 0, note.tags.len) {
+              let tag = note.tags[j]
+
+              // Count tag occurrences
+              if Core:type(tags[tag]) == "num" {
+                tags[tag] = tags[tag] + 1
+              } else {
+                tags[tag] = 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return tags
+}
+
+// Merge local and federated trends
+@mergeTrends(localTags, federatedTagMap) {
+  var merged = []
+  var tagScores = {}
+
+  // Add local trending tags with higher weight
+  for (let i = 0, localTags.len) {
+    let t = localTags[i]
+    tagScores[t.tag] = t.score * 2  // Local trends weighted 2x
+  }
+
+  // Add federated tags
+  let fedKeys = Core:obj_keys(federatedTagMap)
+  for (let i = 0, fedKeys.len) {
+    let tag = fedKeys[i]
+    let count = federatedTagMap[tag]
+
+    if Core:type(tagScores[tag]) == "num" {
+      tagScores[tag] = tagScores[tag] + count
+    } else {
+      tagScores[tag] = count
+    }
+  }
+
+  // Convert to array
+  let allKeys = Core:obj_keys(tagScores)
+  var maxScore = 0
+
+  for (let i = 0, allKeys.len) {
+    let tag = allKeys[i]
+    let score = tagScores[tag]
+
+    if score > maxScore {
+      maxScore = score
+    }
+
+    merged.push({
+      tag: tag
+      score: score
+      normalized: 0
+    })
+  }
+
+  // Normalize scores
+  if maxScore > 0 {
+    for (let i = 0, merged.len) {
+      let t = merged[i]
+      t.normalized = t.score / maxScore
+    }
+  }
+
+  // Sort by score descending (bubble sort)
+  if merged.len > 1 {
+    for (let i = 0, (merged.len - 1)) {
+      for (let j = 0, (merged.len - i - 1)) {
+        if merged[j].score < merged[j + 1].score {
+          let temp = merged[j]
+          merged[j] = merged[j + 1]
+          merged[j + 1] = temp
+        }
+      }
+    }
+  }
+
+  return merged
+}
+
 // Refresh function
 @doRefresh() {
   isLoading = true
   render()
 
-  currentTags = fetchTrends()
+  let localTags = fetchTrends()
+
+  // Merge with federated trends if enabled
+  if useFederated {
+    let federatedTagMap = fetchFederatedTags()
+    currentTags = mergeTrends(localTags, federatedTagMap)
+  } else {
+    currentTags = localTags
+  }
+
+  // Limit to MAX_TAGS
+  if currentTags.len > MAX_TAGS {
+    currentTags = currentTags.slice(0, MAX_TAGS)
+  }
 
   // Save snapshot if we got tags
   if currentTags.len > 0 {
@@ -119,6 +238,12 @@ var snapshots = []
 
   isLoading = false
   render()
+}
+
+// Toggle federated mode
+@toggleFederated() {
+  useFederated = !useFederated
+  doRefresh()
 }
 
 // Main render
@@ -142,9 +267,25 @@ var snapshots = []
       onClick: doRefresh
     }))
 
+    // Federated mode toggle
+    var modeText = "📡 Federated: ON"
+    if !useFederated {
+      modeText = "📡 Federated: OFF"
+    }
+    content.push(Ui:C:button({
+      text: modeText
+      onClick: toggleFederated
+    }))
+
     // Status
+    var statusText = `Tags: {currentTags.len} | Snapshots: {snapshots.len}`
+    if useFederated {
+      statusText = `{statusText} | Mode: Local + Federated`
+    } else {
+      statusText = `{statusText} | Mode: Local Only`
+    }
     content.push(Ui:C:text({
-      text: `Tags: {currentTags.len} | Snapshots: {snapshots.len}`
+      text: statusText
     }))
 
     // Word cloud (visual display only)
@@ -186,7 +327,20 @@ loadSnapshots()
 isLoading = true
 render()
 
-currentTags = fetchTrends()
+let localTags = fetchTrends()
+
+// Merge with federated trends if enabled
+if useFederated {
+  let federatedTagMap = fetchFederatedTags()
+  currentTags = mergeTrends(localTags, federatedTagMap)
+} else {
+  currentTags = localTags
+}
+
+// Limit to MAX_TAGS
+if currentTags.len > MAX_TAGS {
+  currentTags = currentTags.slice(0, MAX_TAGS)
+}
 
 // Save initial snapshot
 if currentTags.len > 0 {
